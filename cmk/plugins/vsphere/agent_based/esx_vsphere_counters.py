@@ -17,6 +17,9 @@ from cmk.agent_based.v2 import (
     RuleSetType,
     Service,
     StringTable,
+    check_levels,
+    render,
+    Result
 )
 from cmk.plugins.lib import diskstat, esx_vsphere, interfaces
 from cmk.plugins.lib.esx_vsphere import Section, SubSectionCounter
@@ -294,4 +297,56 @@ check_plugin_esx_vsphere_counters_diskio = CheckPlugin(
     check_function=check_esx_vsphere_counters_diskio,
     check_default_parameters={},
     check_ruleset_name="diskstat",
+)
+
+# .--GPU--------------------.
+# |                         |
+# |     ____ ____  _   _    |
+# |    / ___|  _ \| | | |   |
+# |   | |  _| |_) | | | |   |
+# |   | |_| |  __/| |_| |   |
+# |    \____|_|    \___/    |
+# |                         |
+# '-------------------------'
+
+# Sample
+# gpu.mem.reserved|000:003:00.0|318976|kiloBytes
+# gpu.mem.total|000:003:00.0|23580672|kiloBytes
+# gpu.mem.usage|000:003:00.0|135|percent
+# gpu.mem.used|000:003:00.0|318976|kiloBytes
+# gpu.power.used|000:003:00.0|21|watt
+# gpu.temperature|000:003:00.0|35|celsius
+# gpu.utilization|000:003:00.0|0|percent
+
+def discover_esx_vsphere_counters_gpu_util(section: Section) -> DiscoveryResult:
+    for name, instances in section.items():
+        if name == "gpu.utilization":
+            for gpu_id, metrics in instances.items():
+              yield Service(item=gpu_id)
+
+def check_esx_vsphere_counters_gpu_util(
+    item: str,
+    section: Section,
+) -> CheckResult:
+    gpu_utilization = 0
+    data = section.get("gpu.utilization", {}).get(item)
+    multivalues, _unit = data[0] if data else (None, None)
+    if multivalues is not None:
+        gpu_utilization = multivalues[0] / 10000
+        yield check_levels(
+            gpu_utilization,
+            render_func=render.percent,
+            metric_name="esx_gpu_utilization",
+            label="Utilization",
+        )
+    else:
+        yield Result(state=State.UNKNOWN, summary="Gpu Utilization metric received but no values found")
+    
+check_plugin_esx_vsphere_gpu_util = CheckPlugin(
+    name="esx_vsphere_counters_gpu",
+    sections=["esx_vsphere_counters"],
+    service_name="GPU Utilization %s",
+    discovery_function=discover_esx_vsphere_counters_gpu_util,
+    check_function=check_esx_vsphere_counters_gpu_util,
+    check_default_parameters={}
 )
